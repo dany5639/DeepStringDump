@@ -6,6 +6,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -13,159 +14,40 @@ namespace DeepStringDump
 {
     public partial class Form1 : Form
     {
-        public string filepath = "";
-
-        public Form1(string[] args)
+        #region Utilities
+        private static List<string> LogQ1 = new List<string>();
+        public static void LogDumpToFile(List<string> in_, string file)
         {
-            InitializeComponent();
+            var fileOut = new FileInfo(file);
+            if (File.Exists(file))
+                File.Delete(file);
 
-            if (args.Length == 1)
-                filepath = args[0];
-
-            if (!File.Exists(filepath))
-                button1_Click(null, null);
-
-            if (!File.Exists(filepath))
+            int i = -1;
+            try
             {
-                Console.WriteLine($"ERROR: file does not exist.");
-                return;
-            }
-
-            richTextBox1.Text = "INFO: click scan to start scanning. Auto dump strings to strings1.log.";
-        }
-
-        private void button1_Click(object sender, EventArgs e)
-        {
-            richTextBox1.Text = "";
-            openFileDialog1.InitialDirectory = Environment.CurrentDirectory;
-            openFileDialog1.ShowDialog();
-            filepath = openFileDialog1.FileName;
-
-            if (!File.Exists(filepath))
-            {
-                Console.WriteLine($"ERROR: file does not exist.");
-                return;
-            }
-        }
-
-        private void Scan()
-        {
-            using (var reader = new BinaryReader(File.OpenRead(filepath)))
-            {
-                debugConsoleWrite = checkBox1.Checked;
-
-                Log1($"INFO: Size 0x{reader.BaseStream.Length:X16}", true, false);
-
-                var bufferSize = numericUpDown1.Value;
-                var minWordCount = numericUpDown2.Value;
-
-                var buffer = new byte[0];
-
-                while (true)
+                using (var csvStream = fileOut.OpenWrite())
+                using (var csvWriter = new StreamWriter(csvStream))
                 {
-                    buffer = reader.ReadBytes((int)bufferSize);
-                     
-                    Log1($"INFO: read 0x{buffer.Length:X16} bytes at {reader.BaseStream.Position:X16} out of {reader.BaseStream.Length:X16}.", true, false);
-
-                    var word = new List<char>();
-                    var items = new List<List<char>>();
-
-                    // pass 1, find words with sequential characters
-                    for (int i = 1; i < buffer.Length - 1; i++)
+                    foreach (var a in in_)
                     {
-                        var cchar = (char)buffer[i];
-
-                        if (ValidCharacters.Contains(buffer[i]))
-                        {
-                            word.Add(cchar);
-                            continue;
-                        }
-
-                        if (buffer[i] == 0)
-                        {
-                            if (word.Count >= minWordCount)
-                                items.Add(word);
-
-                            word = new List<char>();
-                        }
-
-                        if (word.Count >= minWordCount)
-                            items.Add(word);
-                        word = new List<char>();
-
+                        csvStream.Position = csvStream.Length;
+                        csvWriter.WriteLine(a);
+                        i++;
                     }
-
-                    foreach (var a in items)
-                    {
-                        // foreach (var b in a)
-                        //     foreach (var c in a)
-                        //         if (b != c)
-                        //             goto ok;
-                        // 
-                        // continue;
-                        // 
-                        // ok:
-
-                        var d = "";
-                        foreach (var b in a)
-                            d = $"{d}{(char)b}";
-
-                        // richTextBox1.Text += $"{d}\n";
-                        Log1($"{d}");
-                    }
-
-                    items = new List<List<char>>();
-
-                    // pass 2, find words with characters separated by 0x00
-                    for (int i = 1; i < buffer.Length - 1; i++)
-                    {
-                        var cchar = (char)buffer[i];
-
-                        if (ValidCharacters.Contains(buffer[i]))
-                        {
-                            if (buffer[i - 1] != 0 || buffer[i + 1] != 0)
-                                continue;
-                    
-                            word.Add(cchar);
-                    
-                            if (buffer[i + 1] == 0)
-                                i++;
-                    
-                        }
-                        else
-                        {
-                            if (word.Count >= minWordCount)
-                                items.Add(word);
-
-                            word = new List<char>();
-                        }
-                    
-                    }
-
-                    foreach (var a in items)
-                    {
-                        // foreach (var b in a)
-                        //     foreach (var c in a)
-                        //         if (b != c)
-                        //             goto ok;
-                        // 
-                        // continue;
-                        // 
-                        // ok:
-
-                        var d = "";
-                        foreach (var b in a)
-                            d = $"{d}{(char)b}";
-
-                        // richTextBox1.Text += $"{d}\n";
-                        Log2($"{d}");
-                    }
-
-                    if (reader.BaseStream.Position == reader.BaseStream.Length)
-                        return;
                 }
             }
+            catch
+            { }
+
         }
+        public static void Log1(string in_, bool force = false, bool write = true)
+        {
+            //if (write)
+            LogQ1.Add(in_);
+            //if (debugConsoleWrite || force)
+            //    Console.WriteLine($"{in_}");
+        }
+        #endregion
 
         private List<byte> ValidCharacters = new List<byte>
         {
@@ -183,6 +65,8 @@ namespace DeepStringDump
             0x29, // )
             0x5B, // [
             0x5D, // ]
+            0x3C, // <
+            0x3E, // >
             0x40, // @
             0x30, // 0
             0x31, // 1
@@ -247,7 +131,6 @@ namespace DeepStringDump
             0x79, // y
             0x7A, // z
         };
-
         private static List<byte> ValidCharacters_symbols = new List<byte>
         {
             0x20, //  
@@ -283,61 +166,328 @@ namespace DeepStringDump
             0x7C, // |
             0x7D, // }
         };
+        public string filepath = "";
+        private static int threadsDone = 0;
 
-        #region Utilities
-        private static bool debugConsoleWrite = true;
-        private static List<string> LogQ1 = new List<string>();
-        private static List<string> LogQ2 = new List<string>();
-
-        public static void LogDumpToFile(List<string> in_, string file)
+        public Form1(string[] args)
         {
-            var fileOut = new FileInfo(file);
-            if (File.Exists(file))
-                File.Delete(file);
+            InitializeComponent();
 
-            int i = -1;
-            try
+            if (args.Length == 1)
+                filepath = args[0];
+
+            if (!File.Exists(filepath))
+                button1_Click(null, null);
+
+            if (!File.Exists(filepath))
             {
-                using (var csvStream = fileOut.OpenWrite())
-                using (var csvWriter = new StreamWriter(csvStream))
-                {
-                    foreach (var a in in_)
-                    {
-                        csvStream.Position = csvStream.Length;
-                        csvWriter.WriteLine(a);
-                        i++;
-                    }
-                }
+                Console.WriteLine($"ERROR: file does not exist.");
+                return;
             }
-            catch
-            { }
 
         }
 
-        public static void Log1(string in_, bool force = false, bool write = true)
+        private void button1_Click(object sender, EventArgs e)
         {
-            if (write)
-                LogQ1.Add(in_);
-            if (debugConsoleWrite || force)
-                Console.WriteLine($"{in_}");
-        }
-        public static void Log2(string in_, bool force = false, bool write = true)
-        {
-            if (write)
-                LogQ2.Add(in_);
-            if (debugConsoleWrite || force)
-                Console.WriteLine($"{in_}");
+            LogQ1 = new List<string>();
+
+            openFileDialog1.InitialDirectory = Environment.CurrentDirectory;
+            if (filepath != "")
+                openFileDialog1.InitialDirectory = Directory.GetParent(filepath).FullName;
+
+            openFileDialog1.ShowDialog();
+            filepath = openFileDialog1.FileName;
+
+            if (!File.Exists(filepath))
+            {
+                Console.WriteLine($"ERROR: file does not exist.");
+                return;
+            }
         }
 
-        #endregion
+        public Thread StartTheThread(byte[] buffer, int start, int end)
+        {
+            var t = new Thread(() => Scan2(buffer, start, end));
+            t.Start();
+            return t;
+        }
+
+        private void Scan2(byte[] buffer, int start, int end)
+        {
+            var minCharCount = numericUpDown2.Value;
+            var word = new List<char>();
+            var items = new List<List<char>>();
+
+            // pass 1, find words with sequential characters
+            for (int i = start; i < end - 1; i++)
+            {
+                toolStripProgressBar1.Value = (i / buffer.Length) * 100;
+
+                var cchar = (char)buffer[i];
+
+                if (ValidCharacters.Contains(buffer[i]))
+                {
+                    word.Add(cchar);
+                    continue;
+                }
+
+                if (buffer[i] == 0)
+                {
+                    if (word.Count > minCharCount - 1)
+                        items.Add(word);
+
+                    word = new List<char>();
+                }
+
+                if (word.Count > minCharCount - 1)
+                    items.Add(word);
+                word = new List<char>();
+
+            }
+
+            // pass 2, find words with characters separated by 0x00
+            for (int i = start; i < end - 1; i++)
+            {
+                var cchar = (char)buffer[i];
+
+                if (ValidCharacters.Contains(buffer[i]))
+                {
+                    if (buffer[i - 1] != 0 || buffer[i + 1] != 0)
+                        continue;
+
+                    word.Add(cchar);
+
+                    if (buffer[i + 1] == 0)
+                        i++;
+
+                }
+                else
+                {
+                    if (word.Count > minCharCount - 1)
+                        items.Add(word);
+
+                    word = new List<char>();
+                }
+
+            }
+
+            foreach (var a in items)
+            {
+                var d = "";
+                foreach (var b in a)
+                    d = $"{d}{(char)b}";
+
+                Log1($"{d}");
+            }
+
+            threadsDone++;
+        }
+
+        private void Scan()
+        {
+            using (var reader = new BinaryReader(File.OpenRead(filepath)))
+            {
+                // Log1($"INFO: Size 0x{reader.BaseStream.Length:X16}", true, false);
+
+                var bufferLength = (int)reader.BaseStream.Length;
+                if (reader.BaseStream.Length > int.MaxValue)
+                    throw new Exception("ERROR: file too big, must edit code.");
+
+
+                var buffer = reader.ReadBytes(bufferLength);
+
+                var bufferLength2 = buffer.Length;
+                if (bufferLength2 < 5)
+                    return;
+                var bufferLengthdiv4 = bufferLength2 / 4;
+
+                StartTheThread(buffer, 1, bufferLengthdiv4 * 1);
+                StartTheThread(buffer, bufferLengthdiv4 * 1 - (int)numericUpDown2.Value, bufferLengthdiv4 * 2);
+                StartTheThread(buffer, bufferLengthdiv4 * 2 - (int)numericUpDown2.Value, bufferLengthdiv4 * 3);
+                StartTheThread(buffer, bufferLengthdiv4 * 3 - (int)numericUpDown2.Value, bufferLengthdiv4 * 4);
+
+            }
+        }
 
         private void button2_Click(object sender, EventArgs e)
-        { 
+        {
+            LogQ1 = new List<string>();
+            var startTime = DateTime.Now;
             Scan();
-            LogDumpToFile(LogQ1, "strings1.log");
-            LogDumpToFile(LogQ2, "strings2.log");
+            start:
+            Thread.Sleep(100);
+            if (threadsDone < 4)
+                goto start;
 
-            richTextBox1.Text = "INFO: dumped strings to strings1.log and strings2.log";
+            var endTime = DateTime.Now;
+
+            var fileinfo = new FileInfo(filepath);
+            var path = $"{fileinfo.DirectoryName}\\{fileinfo.Name.Substring(0, fileinfo.Name.Length - fileinfo.Extension.Length)}_strings.txt";
+
+            label1.Text = $"threads:{threadsDone}; dT:{endTime - startTime} {path}";
+            LogDumpToFile(LogQ1, $"{path}");
+
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            var dir2 = Directory.EnumerateFiles(Directory.GetParent(filepath).FullName);
+
+            foreach (var a in dir2)
+            {
+                LogQ1 = new List<string>();
+
+                filepath = a;
+
+                Scan();
+
+                if (LogQ1.Count == 0)
+                    continue;
+
+                LogDumpToFile(LogQ1, $"{filepath.Split("\\".ToCharArray()).Last().Split(".".ToCharArray()).First()}.txt");
+
+                Console.WriteLine($"Dumped strings to {filepath.Split("\\".ToCharArray()).Last().Split(".".ToCharArray()).First()}.txt");
+            }
+        }
+
+        private void Button3_Click_1(object sender, EventArgs e)
+        {
+            filepath = @"D:\TEST.RAW";
+
+            using (var reader = new BinaryReader(File.OpenRead(filepath)))
+            {
+                var bufferLength = (int)reader.BaseStream.Length;
+                if (reader.BaseStream.Length > int.MaxValue)
+                    throw new Exception("ERROR: file too big, must edit code.");
+
+                var buffer = reader.ReadBytes(bufferLength);
+
+                var minCharCount = numericUpDown2.Value;
+                var items = new List<List<char>>();
+                toolStripProgressBar1.Maximum = buffer.Length;
+                // pass 1, find words with sequential characters
+                var word = new List<char>();
+
+                for (int i = 0; i < buffer.Length - 1; i++)
+                {
+                    if (buffer[i] == 0)
+                    {
+                        for (int j = i + 1; j < buffer.Length - 1; j++)
+                        {
+                            if ((buffer[j] < 0x20 || buffer[j] > 0x7D) && buffer[j] != 0x0)
+                                goto invalidWord;
+                            else
+                                word.Add((char)buffer[j]);
+                            if (buffer[j] == 0 && word.Count > minCharCount) // pick only words with 0x00 caps
+                                goto foundWord;
+                            if (buffer[j] == 0)
+                                goto invalidWord;
+                        }
+                        foundWord:
+                        items.Add(word);
+
+                        var word2 = "";
+                        foreach (var a in word)
+                            word2 = $"{word2}{a}";
+                        Console.WriteLine($"0x{i:X8} {word2}");
+
+                        toolStripProgressBar1.Value = buffer.Length - i;
+                    }
+                    invalidWord:
+                    word = new List<char>();
+
+                }
+
+                /*
+                // pass 2, find words with characters separated by 0x00
+                // for (int i = 0; i < buffer.Length - 1; i++)
+                // {
+                //     toolStripProgressBar1.Value = buffer.Length - i;
+                // 
+                //     var cchar = (char)buffer[i];
+                // 
+                //     if (ValidCharacters.Contains(buffer[i]))
+                //     {
+                //         if (buffer[i - 1] != 0 || buffer[i + 1] != 0)
+                //             continue;
+                // 
+                //         word.Add(cchar);
+                // 
+                //         if (buffer[i + 1] == 0)
+                //             i++;
+                // 
+                //     }
+                //     else
+                //     {
+                //         if (word.Count > minCharCount - 1)
+                //             items.Add(word);
+                // 
+                //         word = new List<char>();
+                //     }
+                // 
+                // }
+                */
+
+                Console.WriteLine("000102030405060708090A0B0C0D0E0F");
+                // WARNING IT FUCKS UP ON UNICODE OR WHATEVER ITS CALLED
+                for (int i = 0; i < buffer.Length - 1; i++)
+                {
+                    if (i == 0xFF)
+                        ;
+
+                    if (i != 0 && i % 0x10 == 0)
+                        Console.WriteLine();
+
+                    Console.Write($"{(byte)buffer[i]:X2}");
+
+                    if (buffer[i] == 0 && buffer[i + 1] == 0)
+                    {
+                        if (buffer[i + 1] == 0)
+                            continue;
+
+                        if (buffer[i + 2] != 0)
+                            continue;
+
+                        for (int j = i + 1; j < buffer.Length - 1; j++)
+                        {
+                            if ((buffer[j] < 0x20 || buffer[j] > 0x7D) && buffer[j] != 0x0)
+                                goto invalidWord;
+                            else
+                                word.Add((char)buffer[j]);
+                            if (word.Count > minCharCount)
+                                goto foundWord;
+                        }
+                        foundWord:
+                        items.Add(word);
+                        var word2 = "";
+                        foreach (var a in word)
+                            word2 = $"{word2}{a}";
+                        Console.WriteLine($"0x{i:X8} {word2}");
+                        toolStripProgressBar1.Value = buffer.Length - i;
+                    }
+                    invalidWord:
+                    word = new List<char>();
+
+                }
+
+                foreach (var a in items)
+                {
+                    var d = "";
+                    foreach (var b in a)
+                        d = $"{d}{(char)b}";
+
+                    Log1($"{d}");
+                }
+
+            }
+
+            if (LogQ1.Count == 0)
+                return;
+
+            LogDumpToFile(LogQ1, $"{filepath.Split("\\".ToCharArray()).Last().Split(".".ToCharArray()).First()}.txt");
+
+            Console.WriteLine($"Dumped strings to {filepath.Split("\\".ToCharArray()).Last().Split(".".ToCharArray()).First()}.txt");
         }
     }
+
 }
